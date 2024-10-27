@@ -2,8 +2,9 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
-def scrape_worldometer(url):
-    response = requests.get(url)
+def scrape_worldometer_population():
+    population_url = 'https://www.worldometers.info/world-population/population-by-country/'
+    response = requests.get(population_url)
     soup = BeautifulSoup(response.text, 'html.parser')
     table = soup.find('table', {'id': 'example2'})
     
@@ -11,88 +12,95 @@ def scrape_worldometer(url):
     for row in table.find_all('tr')[1:]:  # Skip the header row
         columns = row.find_all('td')
         if len(columns) >= 12:
-            country = columns[1].text.strip()
-            population = columns[2].text.strip()
-            yearly_change = columns[3].text.strip()
-            net_change = columns[4].text.strip()
-            density = columns[5].text.strip()
-            land_area = columns[6].text.strip()
-            migrants = columns[7].text.strip()
-            median_age = columns[9].text.strip()
-            world_percent = columns[11].text.strip()
-            
             data.append({
-                'Country': country,
-                'Population': population,
-                'Yearly Change': yearly_change,
-                'Net Change': net_change,
-                'Density': density,
-                'Land Area': land_area,
-                'Migrants': migrants,
-                'Median Age': median_age,
-                'World Percent': world_percent
+                'Country': columns[1].text.strip(),
+                'Population': columns[2].text.strip(),
+                'Yearly Change': columns[3].text.strip(),
+                'Net Change': columns[4].text.strip(),
+                'Density': columns[5].text.strip(),
+                'Land Area': columns[6].text.strip(),
+                'Migrants': columns[7].text.strip(),
+                'Median Age': columns[9].text.strip(),
+                'World Percent': columns[11].text.strip()
             })
     
     return data
-
-def scrape_worldometer_gdp(url):
-    response = requests.get(url)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    table = soup.find('table', {'id': 'example2'})
-    
-    gdp_data = {}
-    for row in table.find_all('tr')[1:]:  # Skip the header row
-        columns = row.find_all('td')
-        if len(columns) >= 3:
-            country = columns[1].text.strip()
-            gdp = columns[2].text.strip()
-            gdp_data[country] = gdp
-    
-    return gdp_data
 
 def scrape_life_expectancy(url):
     response = requests.get(url)
     soup = BeautifulSoup(response.text, 'html.parser')
     table = soup.find('table')
     
-    life_expectancy_data = {}
+    life_expectancy_data = []
     for row in table.find_all('tr')[1:]:  # Skip the header row
         columns = row.find_all('td')
-        if len(columns) >= 2:
-            country = columns[0].text.strip()
-            life_expectancy = columns[1].text.strip()
-            life_expectancy_data[country] = life_expectancy
+        if len(columns) >= 4:
+            life_expectancy_data.append({
+                'Country': columns[1].text.strip(),
+                'Life Expectancy (Both)': columns[2].text.strip(),
+                'Life Expectancy (Male)': columns[3].text.strip(),
+                'Life Expectancy (Female)': columns[4].text.strip()
+            })
     
     return life_expectancy_data
 
-# Scrape population data
-population_url = 'https://www.worldometers.info/world-population/population-by-country/'
-population_data = scrape_worldometer(population_url)
+def scrape_gdp_data(url):
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    table = soup.find('table', {'id': 'example2'})
+    
+    gdp_data = []
+    for row in table.find_all('tr')[1:]:  # Skip the header row
+        columns = row.find_all('td')
+        if len(columns) >= 7:
+            gdp_data.append({
+                'Country': columns[1].text.strip(),
+                'GDP (nominal)': columns[2].text.strip(),
+                'GDP Growth': columns[4].text.strip(),
+                'GDP per capita': columns[6].text.strip()
+            })
+    
+    return gdp_data
 
-# Scrape GDP data
-gdp_url = 'https://www.worldometers.info/gdp/gdp-by-country/'
-gdp_data = scrape_worldometer_gdp(gdp_url)
+# Scrape population data
+population_data = scrape_worldometer_population()
 
 # Scrape life expectancy data
 life_expectancy_url = 'https://www.worldometers.info/demographics/life-expectancy/'
 life_expectancy_data = scrape_life_expectancy(life_expectancy_url)
 
-# Combine all data
-for item in population_data:
-    country = item['Country']
-    if country in gdp_data:
-        item['GDP (nominal)'] = gdp_data[country]
-    else:
-        item['GDP (nominal)'] = 'N/A'
-    
-    if country in life_expectancy_data:
-        item['Life Expectancy'] = life_expectancy_data[country]
-    else:
-        item['Life Expectancy'] = 'N/A'
+# Scrape GDP data
+gdp_url = 'https://www.worldometers.info/gdp/gdp-by-country/'
+gdp_data = scrape_gdp_data(gdp_url)
 
-# Convert data to DataFrame
-df = pd.DataFrame(population_data)
+# Combine all data
+combined_data = []
+for pop_item in population_data:
+    country = pop_item['Country']
+    combined_item = pop_item.copy()
+    
+    # Add life expectancy data
+    life_exp_match = next((item for item in life_expectancy_data if item['Country'] == country), None)
+    if life_exp_match:
+        combined_item.update({
+            'Life Expectancy (Both)': life_exp_match['Life Expectancy (Both)'],
+            'Life Expectancy (Male)': life_exp_match['Life Expectancy (Male)'],
+            'Life Expectancy (Female)': life_exp_match['Life Expectancy (Female)']
+        })
+    
+    # Add GDP data
+    gdp_match = next((item for item in gdp_data if item['Country'] == country), None)
+    if gdp_match:
+        combined_item.update({
+            'GDP (nominal)': gdp_match['GDP (nominal)'],
+            'GDP Growth': gdp_match['GDP Growth'],
+            'GDP per capita': gdp_match['GDP per capita']
+        })
+    
+    combined_data.append(combined_item)
+
+# Convert to DataFrame
+df = pd.DataFrame(combined_data)
 
 # Save to CSV
-df.to_csv('country_data_worldometer_extended.csv', index=False)
-print("Data scraping complete. CSV file created.")
+df.to_csv('country_data_worldometer_with_gdp.csv', index=False)

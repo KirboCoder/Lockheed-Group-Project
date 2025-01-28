@@ -5,6 +5,12 @@ import time
 import re
 from bs4 import BeautifulSoup
 import pycountry
+from datetime import datetime
+
+def get_year_range():
+    current_year = datetime.now().year
+    start_year = current_year - 7
+    return start_year, current_year
 
 def clean_numeric_value(value):
     if isinstance(value, (int, float)):
@@ -18,30 +24,73 @@ def clean_numeric_value(value):
         return float(match.group())
     return None
 
+def get_currency_info():
+    url = "https://en.wikipedia.org/wiki/List_of_circulating_currencies"
+    response = requests.get(url)
+    soup = BeautifulSoup(response.content, 'html.parser')
+
+    currency_data = {}
+    table = soup.find('table', {'class': 'wikitable'})
+
+    for row in table.find_all('tr')[1:]:
+        cols = row.find_all('td')
+        if len(cols) >= 4:
+            country = cols[0].text.strip()
+            currency_name = cols[1].text.strip()
+            currency_code = cols[2].text.strip()
+            iso_code = cols[3].text.strip()
+
+            currency_data[country.lower()] = {
+                "Currency Name": currency_name,
+                "Currency Code": currency_code,
+                "ISO Code": iso_code
+            }
+
+    return currency_data
+
 def get_world_bank_data(country_code, indicators):
     base_url = "http://api.worldbank.org/v2"
     data = {}
+    start_year, current_year = get_year_range()
     try:
         for indicator, key in indicators.items():
-            response = requests.get(f"{base_url}/country/{country_code}/indicator/{indicator}?format=json")
+            response = requests.get(f"{base_url}/country/{country_code}/indicator/{indicator}?format=json&date={start_year}:{current_year}")
             if response.status_code == 200:
                 result = response.json()
                 if len(result) > 1 and result[1]:
-                    data[key] = result[1][0].get("value")
-                else:
-                    data[key] = None
+                    for year_data in result[1]:
+                        year = year_data['date']
+                        value = year_data['value']
+                        data[f"{key} {year}"] = value
+
+  
+        country_response = requests.get(f"{base_url}/country/{country_code}?format=json")
+        if country_response.status_code == 200:
+            country_result = country_response.json()
+            if len(country_result) > 1 and country_result[1]:
+                country_info = country_result[1][0]
+                country_name = country_info.get('name', '')
     except Exception as e:
         print(f"World Bank API error: {e}")
     return data
 
-def get_pycountry_data():
-    country_data = []
-    for country in pycountry.countries:
-        country_data.append({
-            'name': {'common': country.name},
-            'cca3': country.alpha_3
-        })
-    return country_data
+def get_defense_expenditure(country_code):
+    base_url = "http://api.worldbank.org/v2"
+    indicator = "MS.MIL.XPND.GD.ZS"  
+    start_year, current_year = get_year_range()
+    data = {}
+    try:
+        response = requests.get(f"{base_url}/country/{country_code}/indicator/{indicator}?format=json&date={start_year}:{current_year}")
+        if response.status_code == 200:
+            result = response.json()
+            if len(result) > 1 and result[1]:
+                for year_data in result[1]:
+                    year = year_data['date']
+                    value = year_data['value']
+                    data[f"Defense Expenditure (% of GDP) {year}"] = value
+    except Exception as e:
+        print(f"Error fetching defense expenditure data: {e}")
+    return data
 
 def get_worldometer_data():
     url = "https://www.worldometers.info/world-population/population-by-country/"
@@ -163,7 +212,6 @@ def clean_religion_data(religions_str):
     extracted_religions = {religion: 0 for religion in main_religions}
     extracted_religions['Other/None'] = 0
 
-    # Split the input string and iterate through each entry
     entries = religions_str.split('\n')
     for entry in entries:
         entry = entry.strip().lower()
@@ -171,17 +219,14 @@ def clean_religion_data(religions_str):
         match = re.search(r'\b(\d{1,3}(?:\.\d+)?|\d+)%', entry)
         if match:
             percentage = float(match.group(1))
-        
-        # Check for main religions
+
         for religion in main_religions:
             if religion.lower() in entry:
                 extracted_religions[religion] += percentage
                 break
         else:
-            # If no main religion is found, add to Other/None
             extracted_religions['Other/None'] += percentage
 
-    # Remove religions with 0 percentage
     extracted_religions = {k: v for k, v in extracted_religions.items() if v > 0}
 
     return extracted_religions
@@ -195,69 +240,103 @@ def get_all_country_data():
         "SL.UEM.TOTL.ZS": "Unemployment",
         "SP.POP.GROW": "Population Growth Rate",
     }
-    pycountry_data = get_pycountry_data()
     worldometer_data = get_worldometer_data()
     life_expectancy_data = get_life_expectancy_data()
     factbook_data = get_factbook_data()
+    currency_data = get_currency_info()
     all_data = []
-    for country in pycountry_data:
-        country_name = country['name']['common']
-        country_code = country['cca3']
+
+    for country in pycountry.countries:
+        country_name = country.name
+        country_code = country.alpha_3
         country_key = country_name.strip().lower()
+
         country_data = {
             "Country": country_name,
+            "Alpha-2": country.alpha_2,
+            "Alpha-3": country.alpha_3,
+            "Numeric Code": country.numeric,
         }
+
+        if country_key in currency_data:
+            country_data.update(currency_data[country_key])
+        else:
+            country_data["Currency Name"] = "N/A"
+            country_data["Currency Code"] = "N/A"
+            country_data["ISO Code"] = "N/A"
+
         world_bank_data = get_world_bank_data(country_code, indicators)
+        defense_data = get_defense_expenditure(country_code)
         country_data.update(world_bank_data)
+        country_data.update(defense_data)
+
         if country_key in worldometer_data:
             country_data.update(worldometer_data[country_key])
         if country_key in life_expectancy_data:
             country_data.update(life_expectancy_data[country_key])
         if country_key in factbook_data:
             country_data.update(factbook_data[country_key])
+
         all_data.append(country_data)
         time.sleep(0.5)
 
     for country_data in all_data:
         for key, value in country_data.items():
-            if key not in ["Country", "Religions"]:
+            if key not in ["Country", "Religions", "Alpha-2", "Alpha-3", "Numeric Code", "Currency Code", "Currency Name", "ISO Code"]:
                 country_data[key] = clean_numeric_value(value)
         country_data['Religions'] = clean_religion_data(country_data.get('Religions', ''))
 
     return all_data
 
+
 if __name__ == "__main__":
     print("Fetching data for all countries...")
     data = get_all_country_data()
-    verified_data = [d for d in data if d.get("Country") and d.get("Population")]
+    verified_data = [d for d in data if d.get("Country") and d.get("Population 2020")]
     print(f"Total countries processed: {len(verified_data)}")
 
     with open("country_data.json", "w") as f:
         json.dump(verified_data, f, indent=2)
     print("Data saved to 'country_data.json'.")
 
-    csv_fields = [
-        "Country", "Population", "GDP", "GDP Growth", "GDP Per Capita",
-        "Unemployment", "Population Growth Rate", "Yearly Change", "Net Change",
-        "Density (P/Km²)", "Land Area (Km²)", "Migrants (net)", "Fertility Rate",
-        "Median Age", "Urban Pop %", "World Share", "Age Structure (0-14)",
-        "Age Structure (15-64)", "Age Structure (65+)", "GDP (PPP)",
-        "GDP Growth Rate", "GDP (Official Exchange Rate)", "Inflation Rate",
-        "GDP Composition - Agriculture", "GDP Composition - Industry",
-        "GDP Composition - Services", "Life Expectancy (both)",
-        "Life Expectancy (female)", "Life Expectancy (male)"
-    ]
+    start_year, current_year = get_year_range()
+    years = range(start_year, current_year + 1)
 
-    main_religions = ['Catholic', 'Protestant', 'Jewish', 'Muslim', 'Hindu', 'Buddhist', 'Orthodox', 'Other/None']
-    csv_fields.extend(main_religions)
+    csv_fields = [
+        "Country", "Currency Name", "Currency Code", "ISO Code",
+    ]
+    for indicator in ["Population", "GDP", "GDP Growth", "GDP Per Capita", "Unemployment", "Population Growth Rate", "Defense Expenditure (% of GDP)"]:
+        csv_fields.extend([f"{indicator} {year}" for year in years])
+
+    csv_fields.extend([
+        "Yearly Change", "Net Change", "Density (P/Km²)", "Land Area (Km²)", "Migrants (net)",
+        "Fertility Rate", "Median Age", "Urban Pop %", "World Share",
+        "Age Structure (0-14)", "Age Structure (15-64)", "Age Structure (65+)",
+        "GDP (PPP)", "GDP (Official Exchange Rate)", "Inflation Rate",
+    ])
+
+    gdp_composition_fields = set()
+    for country in verified_data:
+        gdp_composition_fields.update([k for k in country.keys() if k.startswith("GDP Composition - ")])
+    csv_fields.extend(sorted(gdp_composition_fields))
+
+    csv_fields.extend([
+        "Life Expectancy (both)", "Life Expectancy (female)", "Life Expectancy (male)"
+    ])
+
+    csv_fields.extend([f"Religion {i+1}" for i in range(5)])
+    csv_fields.extend([f"Religion {i+1} Percentage" for i in range(5)])
 
     with open("country_data.csv", "w", newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=csv_fields)
         writer.writeheader()
         for country in verified_data:
-            row = {k: v for k, v in country.items() if k in csv_fields and k != "Religions"}
-            for religion in main_religions:
-                row[religion] = country['Religions'].get(religion, 0)
+            row = {k: v for k, v in country.items() if k in csv_fields}
+            for i, (religion, percentage) in enumerate(country['Religions'].items()):
+                row[f"Religion {i+1}"] = religion.title()
+                row[f"Religion {i+1} Percentage"] = percentage
+                if i == 4:  
+                    break
             writer.writerow(row)
 
     print("Data saved to 'country_data.csv'.")

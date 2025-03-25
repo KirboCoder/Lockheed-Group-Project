@@ -98,26 +98,37 @@ def get_worldometer_data():
         response = requests.get(url)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
-            table = soup.find('table', {'id': 'example2'})
+            table = None
+            for t in soup.find_all("table"):
+                headers = [th.get_text(strip=True) for th in t.find_all("th")]
+                if headers and any("Population" in h and str(current_year) in h for h in headers):
+                    table = t
+                    break
+            if table is None:
+                print("Table not found on Worldometer page")
+                return {}
             data = {}
-            for row in table.find_all('tr')[1:]:
-                cols = row.find_all('td')
-                country = cols[1].text.strip()
+            rows = table.find_all("tr")
+            for row in rows[1:]:
+                cols = row.find_all("td")
+                if len(cols) < 12:
+                    continue
+                country = cols[1].get_text(strip=True)
                 data[country.lower()] = {
-                    'Population': cols[2].text.strip(),
-                    'Yearly Change': cols[3].text.strip(),
-                    'Net Change': cols[4].text.strip(),
-                    'Density (P/Km²)': cols[5].text.strip(),
-                    'Land Area (Km²)': cols[6].text.strip(),
-                    'Migrants (net)': cols[7].text.strip(),
-                    'Fertility Rate': cols[8].text.strip(),
-                    'Median Age': cols[9].text.strip(),
-                    'Urban Pop %': cols[10].text.strip(),
-                    'World Share': cols[11].text.strip()
+                    'Population': cols[2].get_text(strip=True),
+                    'Yearly Change': cols[3].get_text(strip=True),
+                    'Net Change': cols[4].get_text(strip=True),
+                    'Density (P/Km²)': cols[5].get_text(strip=True),
+                    'Land Area (Km²)': cols[6].get_text(strip=True),
+                    'Migrants (net)': cols[7].get_text(strip=True),
+                    'Fertility Rate': cols[8].get_text(strip=True),
+                    'Median Age': cols[9].get_text(strip=True),
+                    'Urban Pop %': cols[10].get_text(strip=True),
+                    'World Share': cols[11].get_text(strip=True)
                 }
             return data
         else:
-            print(f"Worldometer error: {response.status_code}")
+            print("Request failed with status", response.status_code)
     except Exception as e:
         print(f"Error fetching data from Worldometer: {e}")
     return {}
@@ -128,19 +139,30 @@ def get_life_expectancy_data():
         response = requests.get(url)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
-            table = soup.find('table', {'id': 'example2'})
+            table = None
+            for t in soup.find_all("table"):
+                headers = [th.get_text(strip=True) for th in t.find_all("th")]
+                if headers and any("Life Expectancy" in h for h in headers):
+                    table = t
+                    break
+            if table is None:
+                print("Table not found on life expectancy page")
+                return {}
             data = {}
-            for row in table.find_all('tr')[1:]:
-                cols = row.find_all('td')
-                country = cols[1].text.strip()
+            rows = table.find_all("tr")
+            for row in rows[1:]:
+                cols = row.find_all("td")
+                if len(cols) < 5:
+                    continue
+                country = cols[1].get_text(strip=True)
                 data[country.lower()] = {
-                    'Life Expectancy (both)': cols[2].text.strip(),
-                    'Life Expectancy (female)': cols[3].text.strip(),
-                    'Life Expectancy (male)': cols[4].text.strip()
+                    'Life Expectancy (both)': cols[2].get_text(strip=True),
+                    'Life Expectancy (female)': cols[3].get_text(strip=True),
+                    'Life Expectancy (male)': cols[4].get_text(strip=True)
                 }
             return data
         else:
-            print(f"Life expectancy data error: {response.status_code}")
+            print("Request failed with status", response.status_code)
     except Exception as e:
         print(f"Error fetching life expectancy data: {e}")
     return {}

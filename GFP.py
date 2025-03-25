@@ -80,17 +80,17 @@ def parse_value(raw_value):
     if '$' in raw_value:
         raw_value = raw_value.replace('$', '').strip()
     
-    # Extract numerical value and unit
+    #numerical value and unit
     match = re.search(r'''
-        ^               # Start of string
-        (?:             # Non-capturing group
-            \$?         # Optional dollar sign
-            \s*         # Optional whitespace
+        ^               #Start of string
+        (?:             #Non-capturing group
+            \$?         #Optional dollar sign
+            \s*         #Optional whitespace
         )?
-        ([\d,.]+)       # Main numerical value (captured)
-        \s*             # Optional whitespace
-        ([A-Za-z.%/]*)  # Unit/description (captured)
-        $               # End of string
+        ([\d,.]+)       #Main numerical value (captured)
+        \s*             #Optional whitespace
+        ([A-Za-z.%/]*)  #Unit/description (captured)
+        $               #End of string
     ''', raw_value, re.VERBOSE)
 
     if not match:
@@ -105,20 +105,20 @@ def parse_value(raw_value):
         return None
 
     
-    # Handle unit conversions
+    #Handle unit conversions
     unit_multipliers = {
         'B': 1e9, 'B Cu.M': 1e9, 'Billion': 1e9,
         'M': 1e6, 'Million': 1e6,
         'T': 1e12, 'Trillion': 1e12,
-        '%': lambda x: x/100  # Convert percentage to decimal
+        '%': lambda x: x/100 
     }
     
     if unit in unit_multipliers:
         if callable(unit_multipliers[unit]):
-            return unit_multipliers[unit](value)
-        return value * unit_multipliers[unit]
+            return unit_multipliers[unit](numerical_value)
+        return numerical_value * unit_multipliers[unit]
     
-    return value
+    return numerical_value
 
 def scrape_category(url):
     """Improved value extraction with span depth handling"""
@@ -134,12 +134,9 @@ def scrape_category(url):
                 country = block.find('div', class_='longFormName').span.text.strip()
                 value_container = block.find('div', class_='valueContainer')
                 
-                # Improved value extraction logic
                 if value_container:
-                    # Get all nested spans
                     spans = value_container.find_all('span')
                     if spans:
-                        # Use deepest nested span text
                         raw_value = spans[-1].text.strip()
                     else:
                         raw_value = value_container.text.strip()
@@ -157,14 +154,82 @@ def scrape_category(url):
         print(f"Error scraping {url}: {str(e)}")
         return {}
 
+def get_country_detail_urls():
+    """Get the detail page URLs for all countries"""
+    try:
+        url = "https://www.globalfirepower.com/countries-listing.php"
+        response = requests.get(url, headers=HEADERS)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        country_links = soup.find_all('a', href=re.compile(r'country-military-strength-detail'))
+        country_urls = {}
+        
+        for link in country_links:
+            country_name_div = link.find('div', class_='longFormName')
+            if country_name_div and country_name_div.span:
+                country_name = country_name_div.span.text.strip()
+                country_url = "https://www.globalfirepower.com/" + link['href']
+                country_urls[country_name] = country_url
+        
+        return country_urls
+        
+    except Exception as e:
+        print(f"Error getting country URLs: {str(e)}")
+        return {}
+
+def scrape_detailed_manpower_data(country_name, url):
+    """Scrape detailed manpower data from a country's detail page"""
+    try:
+        response = requests.get(url, headers=HEADERS)
+        if response.status_code != 200:
+            print(f"Could not access detail page for {country_name} (status={response.status_code})")
+            return {}
+
+        soup = BeautifulSoup(response.content, 'html.parser')
+        data = {}
+
+        field_patterns = {
+            'air_force_personnel': r'Air Force Personnel',
+            'army_personnel': r'Army Personnel',
+            'navy_personnel': r'Navy Personnel',
+            'total_military_personnel': r'Tot Mil. Personnel',
+            'yearly_mobilization_potential': r'Yearly Mobilization Potential',
+            'mobilization_6_12_months': r'Mobilization 6-12mos',
+            'mobilization_year_2': r'Mobilization Year 2',
+            'mobilization_year_3': r'Mobilization Year 3',
+            'mobilization_year_4_plus': r'Mobilization Year 4\+'
+        }
+
+        for field, pattern in field_patterns.items():
+            #Find the container with this field title
+            title_span = soup.find('span', string=re.compile(pattern))
+            if title_span:
+                container = title_span.find_parent('div', class_='specsGenContainers')
+                if container:
+                    value_span = container.find('span', class_='textWhite textShadow')
+                    if value_span:
+                        raw_value = value_span.text.strip()
+                        data[field] = parse_value(raw_value)
+
+        return data
+    except Exception as e:
+        print(f"Error scraping detailed manpower for {country_name}: {str(e)}")
+        return {}
+
+        
+    except Exception as e:
+        print(f"Error scraping detailed manpower for {country_name}: {str(e)}")
+        return {}
+
 def compile_dataset():
     master_df = pd.DataFrame()
+
+    country_urls = get_country_detail_urls()
 
     for category, subcats in CATEGORIES.items():
         print(f"\n{'='*40}\nScraping {category} Data\n{'='*40}")
         for subcat, url in subcats.items():
             print(f"-> {subcat.replace('_', ' ').title()}...")
-            sleep
             data = scrape_category(url)
             temp_df = pd.DataFrame(list(data.items()), columns=['Country', subcat])
             
@@ -172,14 +237,40 @@ def compile_dataset():
                 master_df = temp_df
             else:
                 master_df = pd.merge(master_df, temp_df, on='Country', how='outer')
-            sleep(1)  # Rate limiting for servers to make sure they are good
+            sleep(1)  # Rate limiting
 
-    # Clean and sort data
+    print(f"\n{'='*40}\nScraping Detailed Manpower Data\n{'='*40}")
+    detailed_fields = [
+        'air_force_personnel', 'army_personnel', 'navy_personnel', 
+        'total_military_personnel', 'yearly_mobilization_potential',
+        'mobilization_6_12_months', 'mobilization_year_2', 
+        'mobilization_year_3', 'mobilization_year_4_plus'
+    ]
+    
+    detailed_data = {field: {} for field in detailed_fields}
+    
+    for country, url in country_urls.items():
+        print(f"-> Detailed manpower for {country}...")
+        country_data = scrape_detailed_manpower_data(country, url)
+        
+        for field in detailed_fields:
+            if field in country_data:
+                detailed_data[field][country] = country_data[field]
+        
+        sleep(1)  #Rate limiting
+
+
+    for field in detailed_fields:
+        temp_df = pd.DataFrame(list(detailed_data[field].items()), columns=['Country', field])
+        if not temp_df.empty:
+            master_df = pd.merge(master_df, temp_df, on='Country', how='outer')
+
+
     num_cols = master_df.columns[master_df.columns != 'Country']
     master_df[num_cols] = master_df[num_cols].apply(pd.to_numeric, errors='coerce')
     master_df = master_df.sort_values(by='Country').reset_index(drop=True)
     
-    # Save to CSV
+
     master_df.to_csv('global_firepower_full_dataset.csv', index=False)
     print("\nDataset successfully saved to global_firepower_full_dataset.csv")
 
